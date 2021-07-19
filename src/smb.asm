@@ -533,6 +533,11 @@ PauseModeFlag         = $07c6
 GroundMusicHeaderOfs  = $07c7
 AltRegContentFlag     = $07ca
 
+; these arent great memory locations for this
+PUp_OrigX = $07d7
+PUp_OrigY = $07d8
+PUp_OrigPage = $07d9
+
 ;-------------------------------------------------------------------------------------
 ;CONSTANTS
 
@@ -752,7 +757,7 @@ InitBuffer:    ldx VRAM_Buffer_Offset,y
                jsr SoundEngine           ;play sound
                jsr ReadJoypads           ;read joypads
                jsr PauseRoutine          ;handle pause
-               jsr UpdateTopScore
+               ;jsr UpdateTopScore
                lda GamePauseStatus       ;check for pause status
                lsr
                bcs PauseSkip
@@ -7063,11 +7068,14 @@ SetupPowerUp:
            sta Enemy_ID+5            ;special use slot of enemy object buffer
            lda Block_PageLoc,x       ;store page location of block object
            sta Enemy_PageLoc+5       ;as page location of power-up object
+           sta PUp_OrigPage
            lda Block_X_Position,x    ;store horizontal coordinate of block object
            sta Enemy_X_Position+5    ;as horizontal coordinate of power-up object
+           sta PUp_OrigX
            lda #$01
            sta Enemy_Y_HighPos+5     ;set vertical high byte of power-up object
            lda Block_Y_Position,x    ;get vertical coordinate of block object
+           sta PUp_OrigY
            sec
            sbc #$08                  ;subtract 8 pixels
            sta Enemy_Y_Position+5    ;and use as vertical coordinate of power-up object
@@ -7084,9 +7092,7 @@ PwrUpJmp:  lda #$01                  ;this is a residual jump point in enemy obj
            bcc StrType               ;if player not fiery, use status as power-up type
            lsr                       ;otherwise shift right to force fire flower type
 StrType:   sta PowerUpType           ;store type here
-PutBehind: lda #%00100000
-           sta Enemy_SprAttrib+5     ;set background priority bit
-           lda #Sfx_GrowPowerUp
+PutBehind: lda #Sfx_GrowPowerUp
            sta Square2SoundQueue     ;load power-up reveal sound and leave
            rts
 
@@ -13435,8 +13441,20 @@ DrawPowerUp:
       asl                        ;multiply by four to get proper offset
       tax                        ;use as X
       lda #$01
-      sta $07                    ;set counter here to draw two rows of sprite object
       sta $03                    ;init d1 of flip control
+
+      ; only draw a single line of the powerup sprite for the first bit
+      ; of the animation, this will keep it covered by the block sprite
+      lda Enemy_State+5
+      cmp #$0A
+      lda #$00
+      adc #$00
+      sta $07
+
+      ; hacky movement of sprite to the second row
+      tya
+      adc #$8
+      tay
 
 PUpDrawLoop:
         lda PowerUpGfxTable,x      ;load left tile of power-up object
@@ -13446,6 +13464,33 @@ PUpDrawLoop:
         dec $07                    ;decrement counter
         bpl PUpDrawLoop            ;branch until two rows are drawn
         ldy Enemy_SprDataOffset+5  ;get sprite data offset again
+
+        ; check so we're still on the same page as the block
+        ; this could be done better but.. whatever.
+        lda ScreenLeft_PageLoc
+        sbc PUp_OrigPage
+        bcs @Skip
+        sec
+        ; set sprite position to the original blocks location
+        lda PUp_OrigX
+        sbc ScreenLeft_X_Pos
+        sta $05
+        sec
+        lda PUp_OrigY
+        sbc #1
+        sta $02
+        ; draw a container sprite at that location
+        lda #$87
+        sta $00
+        lda #$87
+        jsr DrawOneSpriteRow
+        ldx Enemy_SprDataOffset+5
+        lda #%01100000
+        sta Sprite_Attributes+4,x
+        and #%00100000
+        sta Sprite_Attributes,x
+@Skip:
+
         pla                        ;pull saved power-up type from the stack
         beq PUpOfs                 ;if regular mushroom, branch, do not change colors or flip
         cmp #$03
