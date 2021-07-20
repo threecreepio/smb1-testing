@@ -533,6 +533,8 @@ PauseModeFlag         = $07c6
 GroundMusicHeaderOfs  = $07c7
 AltRegContentFlag     = $07ca
 
+PowerupHideboxY       = $07FF
+
 ;-------------------------------------------------------------------------------------
 ;CONSTANTS
 
@@ -7068,6 +7070,7 @@ SetupPowerUp:
            lda #$01
            sta Enemy_Y_HighPos+5     ;set vertical high byte of power-up object
            lda Block_Y_Position,x    ;get vertical coordinate of block object
+           sta PowerupHideboxY
            sec
            sbc #$08                  ;subtract 8 pixels
            sta Enemy_Y_Position+5    ;and use as vertical coordinate of power-up object
@@ -7084,7 +7087,7 @@ PwrUpJmp:  lda #$01                  ;this is a residual jump point in enemy obj
            bcc StrType               ;if player not fiery, use status as power-up type
            lsr                       ;otherwise shift right to force fire flower type
 StrType:   sta PowerUpType           ;store type here
-PutBehind: lda #%00100000
+PutBehind: lda #%00000000
            sta Enemy_SprAttrib+5     ;set background priority bit
            lda #Sfx_GrowPowerUp
            sta Square2SoundQueue     ;load power-up reveal sound and leave
@@ -7134,6 +7137,9 @@ GrowThePowerUp:
 ChkPUSte:  lda Enemy_State+5          ;check power-up object's state
            cmp #$06                   ;for if power-up has risen enough
            bcc ExitPUp                ;if not, don't even bother running these routines
+           jsr RunPUSubs
+           jsr PlacePowerupHidebox
+           rts
 RunPUSubs: jsr RelativeEnemyPosition  ;get coordinates relative to screen
            jsr GetEnemyOffscreenBits  ;get offscreen bits
            jsr GetEnemyBoundBox       ;get bounding box coordinates
@@ -7141,6 +7147,42 @@ RunPUSubs: jsr RelativeEnemyPosition  ;get coordinates relative to screen
            jsr PlayerEnemyCollision   ;check for collision with player
            jsr OffscreenBoundsCheck   ;check to see if it went offscreen
 ExitPUp:   rts                        ;and we're done
+
+PlacePowerupHidebox:
+           ldy Enemy_SprDataOffset+5
+           lda Enemy_Y_Position+5
+           lda PowerupHideboxY         ; get Y of block that contained the powerup
+           sec
+           sbc #1
+           sta Sprite_Y_Position,y     ; position the hidebox vertically
+           sta Sprite_Y_Position+4,y
+           lda Sprite_X_Position+8,y   ; copy x positions from powerup sprites
+           sta Sprite_X_Position,y
+           lda Sprite_X_Position+12,y
+           sta Sprite_X_Position+4,y
+           lda #$87                    ; use fake box tile
+           sta Sprite_Tilenumber,y
+           sta Sprite_Tilenumber+4,y   ; and store sprites in background
+           lda #%00100000
+           sta Sprite_Attributes,y
+           ora #%01000000
+           sta Sprite_Attributes+4,y
+           lda Sprite_Y_Position+16,y  ; avoid drawing second row of powerup
+           cmp Sprite_Y_Position,y     ; until it can be covered by the hidebox
+           bcc @MoveOffscreen
+           lda #$fc
+           sta Sprite_Y_Position+16,y
+           sta Sprite_Y_Position+20,y
+@MoveOffscreen:
+           lda Sprite_Y_Position+8,y   ; if left side of powerup is offscreen, remove left hidebox
+           cmp #$f8
+           bcc :+
+           sta Sprite_Y_Position,y
+:          lda Sprite_Y_Position+12,y  ; if right side of powerup is offscreen, remove right hidebox
+           cmp #$f8
+           bcc :+
+           sta Sprite_Y_Position+4,y
+:          rts
 
 ;-------------------------------------------------------------------------------------
 ;These apply to all routines in this section unless otherwise noted:
@@ -13418,9 +13460,11 @@ PowerUpAttributes:
       .byte $02, $01, $02, $01
 
 DrawPowerUp:
-      ldy Enemy_SprDataOffset+5  ;get power-up's sprite data offset
-      lda Enemy_Rel_YPos         ;get relative vertical coordinate
+      lda Enemy_SprDataOffset+5  ;get power-up's sprite data offset
       clc
+      adc #$8
+      tay
+      lda Enemy_Rel_YPos         ;get relative vertical coordinate
       adc #$08                   ;add eight pixels
       sta $02                    ;store result here
       lda Enemy_Rel_XPos         ;get relative horizontal coordinate
@@ -13455,21 +13499,21 @@ PUpDrawLoop:
         lsr                        ;divide by 2 to change colors every two frames
         and #%00000011             ;mask out all but d1 and d0 (previously d2 and d1)
         ora Enemy_SprAttrib+5      ;add background priority bit if any set
-        sta Sprite_Attributes,y    ;set as new palette bits for top left and
-        sta Sprite_Attributes+4,y  ;top right sprites for fire flower and star
+        sta Sprite_Attributes+8,y    ;set as new palette bits for top left and
+        sta Sprite_Attributes+12,y  ;top right sprites for fire flower and star
         ldx $00
         dex                        ;check power-up type for fire flower
         beq FlipPUpRightSide       ;if found, skip this part
-        sta Sprite_Attributes+8,y  ;otherwise set new palette bits  for bottom left
-        sta Sprite_Attributes+12,y ;and bottom right sprites as well for star only
+        sta Sprite_Attributes+16,y  ;otherwise set new palette bits  for bottom left
+        sta Sprite_Attributes+20,y ;and bottom right sprites as well for star only
 
 FlipPUpRightSide:
-        lda Sprite_Attributes+4,y
-        ora #%01000000             ;set horizontal flip bit for top right sprite
-        sta Sprite_Attributes+4,y
         lda Sprite_Attributes+12,y
+        ora #%01000000             ;set horizontal flip bit for top right sprite
+        sta Sprite_Attributes+12,y
+        lda Sprite_Attributes+20,y
         ora #%01000000             ;set horizontal flip bit for bottom right sprite
-        sta Sprite_Attributes+12,y ;note these are only done for fire flower and star power-ups
+        sta Sprite_Attributes+20,y ;note these are only done for fire flower and star power-ups
 PUpOfs: jmp SprObjectOffscrChk     ;jump to check to see if power-up is offscreen at all, then leave
 
 ;-------------------------------------------------------------------------------------
